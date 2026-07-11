@@ -843,28 +843,84 @@ function derive(raw) {
   return rows;
 }
 
+/* 讀取同站的每日資料快照（GitHub Actions 產生的 data/0050.json） */
+async function loadSnapshot() {
+  const res = await fetch('data/0050.json', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (!Array.isArray(json.rows) || json.rows.length < 40) throw new Error('快照資料不足');
+  return json;
+}
+
+/* 只抓本月與上月，把快照補到最新交易日 */
+async function fetchLiveTail() {
+  const now = new Date();
+  const out = [];
+  for (const k of [1, 0]) {
+    const t = new Date(now.getFullYear(), now.getMonth() - k, 1);
+    const ym = `${t.getFullYear()}${String(t.getMonth() + 1).padStart(2, '0')}01`;
+    out.push(...await fetchTWSEMonth(ym));
+    if (k === 1) await new Promise((r) => setTimeout(r, 300));
+  }
+  return out;
+}
+
+function mergeRows(base, extra) {
+  const byDate = new Map(base.map((r) => [r.d, r]));
+  for (const r of extra) byDate.set(r.d, r);
+  return [...byDate.values()].sort((a, b) => (a.d < b.d ? -1 : 1));
+}
+
 async function loadData(forceRefresh) {
   setBadge('demo', '載入中…');
-  let rows = null, source = 'live';
-  if (!forceRefresh) {
-    const cached = loadCache();
-    if (cached && cached.length) { rows = cached; }
-  }
-  if (!rows) {
+  let rows = null, kind = 'demo', label = '';
+
+  // 1) 同站資料快照（部署在 GitHub Pages 時可用，資料為證交所真實行情）
+  let snap = null;
+  try { snap = await loadSnapshot(); } catch { /* 本機直接開檔案時沒有快照 */ }
+  if (snap) {
+    rows = snap.rows;
+    kind = 'live';
+    label = `證交所資料快照｜最後交易日 ${rows[rows.length - 1].d}`;
+    // 2) 嘗試向證交所補抓最近兩個月，把快照更新到最新交易日
     try {
-      rows = await fetchTWSE();
-      if (!rows.length) throw new Error('empty');
-      saveCache(rows);
-    } catch (e) {
-      statusLine.textContent = '';
-      rows = null;
+      const tail = await fetchLiveTail();
+      if (tail.length) {
+        rows = mergeRows(rows, tail);
+        label = `證交所資料｜最後交易日 ${rows[rows.length - 1].d}`;
+      }
+    } catch { statusLine.textContent = ''; }
+  } else {
+    // 3) 沒有快照（例如直接開本機檔案）：全量向證交所抓取，含當日快取
+    if (!forceRefresh) {
+      const cached = loadCache();
+      if (cached && cached.length) rows = cached;
+    }
+    if (!rows) {
+      try {
+        rows = await fetchTWSE();
+        if (!rows.length) throw new Error('empty');
+        saveCache(rows);
+      } catch (e) {
+        statusLine.textContent = '';
+        rows = null;
+      }
+    }
+    if (rows) {
+      kind = 'live';
+      label = `證交所即時資料｜最後交易日 ${rows[rows.length - 1].d}`;
     }
   }
-  if (!rows) { rows = DEMO_DATA; source = 'demo'; }
+
+  // 4) 全部失敗才用示範資料
+  if (!rows) {
+    rows = DEMO_DATA;
+    kind = 'demo';
+    label = '示範資料（無法取得行情，非真實資料）';
+  }
   state.rows = derive(rows);
-  state.source = source;
-  if (source === 'live') setBadge('live', `證交所即時資料｜最後交易日 ${state.rows.at(-1).d}`);
-  else setBadge('demo', '示範資料（無法連線證交所，非真實行情）');
+  state.source = kind;
+  setBadge(kind, label);
   renderAll();
 }
 
