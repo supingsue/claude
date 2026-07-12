@@ -111,6 +111,9 @@
   }
   .chip:hover { color: var(--text-1); }
   .chip[aria-pressed="true"] { background: var(--chip-active); color: var(--chip-active-ink); border-color: var(--chip-active); font-weight: 600; }
+  .custom-chip { background: var(--chip-active); color: var(--chip-active-ink); border-color: var(--chip-active); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .chart-box svg.brushable { touch-action: pan-y; cursor: crosshair; }
+  .chart-box svg .clickable { cursor: pointer; }
 
   /* KPI 列 */
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
@@ -189,6 +192,7 @@
     <button class="chip" data-range="252" aria-pressed="true" type="button">1年</button>
     <button class="chip" data-range="504" type="button">2年</button>
     <button class="chip" data-range="all" type="button">全部</button>
+    <button class="chip custom-chip" id="customChip" type="button" hidden title="點一下清除自訂區間"></button>
     <span style="flex:1"></span>
     <button class="chip" id="tableToggle" type="button" aria-pressed="false">表格檢視</button>
   </div>
@@ -197,13 +201,13 @@
 
   <div class="card">
     <h2>收盤價走勢</h2>
-    <p class="desc">日收盤價（元）— 滑鼠移入可查看開高低收與量比</p>
+    <p class="desc">日收盤價（元）— 滑鼠移入查看明細；橫向拖曳可放大任意區間，雙擊重設</p>
     <div class="chart-box" id="priceChart"></div>
   </div>
 
   <div class="card">
     <h2>日成交量與均量</h2>
-    <p class="desc">成交量（張，1 張 = 1,000 股）；爆量 = 單日量 &gt; 20 日均量 2 倍</p>
+    <p class="desc">成交量（張，1 張 = 1,000 股）；爆量 = 單日量 &gt; 20 日均量 2 倍 — 橫向拖曳可放大區間，雙擊重設</p>
     <div class="legend" id="volLegend">
       <span class="key"><span class="swatch" style="background:var(--up)"></span>上漲日成交量</span>
       <span class="key"><span class="swatch" style="background:var(--down)"></span>下跌日成交量</span>
@@ -216,7 +220,7 @@
 
   <div class="card">
     <h2>量價關係</h2>
-    <p class="desc">單日漲跌幅 × 量比（當日量 ÷ 5 日均量）— 判讀價漲量增／價跌量增等型態</p>
+    <p class="desc">單日漲跌幅 × 量比（當日量 ÷ 5 日均量）— 判讀價漲量增／價跌量增等型態；點一下資料點可放大該日前後走勢</p>
     <div class="legend">
       <span class="key"><span class="swatch" style="background:var(--up);border-radius:50%"></span>上漲日</span>
       <span class="key"><span class="swatch" style="background:var(--down);border-radius:50%"></span>下跌日</span>
@@ -226,7 +230,7 @@
 
   <div class="card">
     <h2>月成交量</h2>
-    <p class="desc">各月份成交量加總（張）— 觀察量能的長期消長</p>
+    <p class="desc">各月份成交量加總（張）— 點一下月柱即可放大檢視該月</p>
     <div class="chart-box" id="monthChart"></div>
   </div>
 
@@ -745,9 +749,10 @@ const FETCH_MONTHS = 26;           // 抓 26 個月：2 年顯示 + MA20 暖身
 const CACHE_KEY = 'twse_0050_daily_v1';
 
 const state = {
-  rows: [],        // 加工後全序列（含均量欄位）
-  source: 'demo',  // 'live' | 'demo'
-  range: 252,      // 交易日數或 'all'
+  rows: [],           // 加工後全序列（含均量欄位）
+  source: 'demo',     // 'live' | 'demo'
+  range: 252,         // 交易日數或 'all'
+  customRange: null,  // { start, end }（ISO 日期）— 由拖曳或點選圖表產生
   showTable: false,
 };
 
@@ -1064,6 +1069,7 @@ function renderPriceChart(rows) {
     ttRow(tt, null, '成交量', fmtInt(r.v) + ' 張');
     ttRow(tt, null, '量比', r.ratio.toFixed(2));
   });
+  attachBrush(box, svg, rows, x, ih);
 }
 
 /* --- 成交量柱 + 均量線 + 爆量標記 --- */
@@ -1116,6 +1122,7 @@ function renderVolChart(rows) {
     ttRow(tt, null, '漲跌幅', fmtSigned(r.chgPct) + '%', r.up ? 'up' : 'down');
     if (r.spike) ttRow(tt, null, '狀態', '⚠ 爆量（>20日均量2倍）');
   });
+  attachBrush(box, svg, rows, x, ih);
 }
 
 /* --- 量價散佈圖 --- */
@@ -1164,9 +1171,9 @@ function renderScatter(rows) {
     }, svg);
   }
 
-  // 最近點 hover（pointer 只需「最靠近」）
+  // 最近點 hover（pointer 只需「最靠近」）；點一下放大該日前後走勢
   const tt = makeTooltip(box);
-  svg.addEventListener('pointermove', (ev) => {
+  const nearestPt = (ev) => {
     const rect = svg.getBoundingClientRect();
     const px = (ev.clientX - rect.left) * (svg.viewBox.baseVal.width / rect.width);
     const py = (ev.clientY - rect.top) * (svg.viewBox.baseVal.height / rect.height);
@@ -1176,17 +1183,28 @@ function renderScatter(rows) {
       const d2 = dx * dx + dy * dy;
       if (d2 < bd) { bd = d2; best = r; }
     }
-    if (!best || bd > 40 * 40) { tt.style.display = 'none'; return; }
+    return { best: bd <= 40 * 40 ? best : null, px };
+  };
+  svg.addEventListener('pointermove', (ev) => {
+    const { best, px } = nearestPt(ev);
+    if (!best) { tt.style.display = 'none'; svg.style.cursor = ''; return; }
+    svg.style.cursor = 'pointer';
     tt.style.display = 'block';
     tt.innerHTML = '';
     const dEl = document.createElement('div');
-    dEl.className = 'tt-date'; dEl.textContent = best.d;
+    dEl.className = 'tt-date'; dEl.textContent = best.d + '（點一下放大檢視）';
     tt.appendChild(dEl);
     ttRow(tt, best.up ? upC : downC, '漲跌幅', fmtSigned(best.chgPct) + '%', best.up ? 'up' : 'down');
     ttRow(tt, null, '量比', best.ratio.toFixed(2));
     ttRow(tt, null, '成交量', fmtInt(best.v) + ' 張');
+    const rect = svg.getBoundingClientRect();
     positionTooltip(box, tt, px / (svg.viewBox.baseVal.width / rect.width));
   });
+  svg.addEventListener('click', (ev) => {
+    const { best } = nearestPt(ev);
+    if (best) zoomAround(best.d, 20);
+  });
+  svg.addEventListener('dblclick', clearCustomRange);
   svg.addEventListener('pointerleave', () => { tt.style.display = 'none'; });
 }
 
@@ -1218,14 +1236,20 @@ function renderMonthChart(rows) {
     const bx = x(i) - bw / 2;
     const rr = Math.min(4, bw / 2, barH);
     const d = `M${bx},${M.top + ih} V${barY + rr} Q${bx},${barY} ${bx + rr},${barY} H${bx + bw - rr} Q${bx + bw},${barY} ${bx + bw},${barY + rr} V${M.top + ih} Z`;
-    const bar = el('path', { d, fill: seq, 'fill-opacity': i === maxIdx ? 1 : 0.75, style: 'cursor:default' }, svg);
-    // 每根月柱本身是 hit target
+    const bar = el('path', { d, fill: seq, 'fill-opacity': i === maxIdx ? 1 : 0.75, class: 'clickable' }, svg);
+    // 每根月柱本身是 hit target；點一下放大檢視該月
+    const zoomMonth = () => {
+      const inMonth = state.rows.filter((rr) => rr.d.slice(0, 7) === r.m);
+      if (inMonth.length >= 2) setCustomRange(inMonth[0].d, inMonth[inMonth.length - 1].d);
+    };
     bar.addEventListener('pointerenter', () => { bar.setAttribute('fill-opacity', '1'); showMonthTT(i); });
     bar.addEventListener('pointerleave', () => { bar.setAttribute('fill-opacity', i === maxIdx ? '1' : '0.75'); hideMonthTT(); });
+    bar.addEventListener('click', zoomMonth);
     // 透明加大 hit 區
-    const hit = el('rect', { x: M.left + band * i, y: M.top, width: band, height: ih, fill: 'transparent' }, svg);
+    const hit = el('rect', { x: M.left + band * i, y: M.top, width: band, height: ih, fill: 'transparent', class: 'clickable' }, svg);
     hit.addEventListener('pointerenter', () => showMonthTT(i));
     hit.addEventListener('pointerleave', hideMonthTT);
+    hit.addEventListener('click', zoomMonth);
     // 月份標籤（稀疏）
     if (months.length <= 13 || i % 2 === 0) {
       el('text', { x: x(i), y: M.top + ih + 18, 'text-anchor': 'middle', 'font-size': 11, fill: css('--muted') }, svg)
@@ -1249,6 +1273,7 @@ function renderMonthChart(rows) {
     positionTooltip(box, tt, x(i) / (svg.viewBox.baseVal.width / rect.width));
   }
   function hideMonthTT() { tt.style.display = 'none'; }
+  svg.addEventListener('dblclick', clearCustomRange);
 }
 
 /* --- 十字游標共用 --- */
@@ -1259,6 +1284,10 @@ function attachCrosshair(box, svg, rows, x, ih, fillTT) {
     stroke: css('--baseline'), 'stroke-width': 1, visibility: 'hidden',
   }, svg);
   svg.addEventListener('pointermove', (ev) => {
+    if (box.dataset.brushing === '1') { // 拖曳選取中不顯示 tooltip
+      tt.style.display = 'none';
+      return;
+    }
     const rect = svg.getBoundingClientRect();
     const scale = svg.viewBox.baseVal.width / rect.width;
     const px = (ev.clientX - rect.left) * scale;
@@ -1284,6 +1313,62 @@ function attachCrosshair(box, svg, rows, x, ih, fillTT) {
     cross.setAttribute('visibility', 'hidden');
     tt.style.display = 'none';
   });
+}
+
+/* --- 拖曳選取區間（橫向拖曳放大、雙擊重設） --- */
+function attachBrush(box, svg, rows, x, ih) {
+  svg.classList.add('brushable');
+  const sel = el('rect', {
+    x: 0, y: M.top, width: 0, height: ih,
+    fill: css('--price'), 'fill-opacity': 0.14, visibility: 'hidden', 'pointer-events': 'none',
+  }, svg);
+  const pxOf = (ev) => {
+    const rect = svg.getBoundingClientRect();
+    return (ev.clientX - rect.left) * (svg.viewBox.baseVal.width / rect.width);
+  };
+  const nearestIdx = (px) => {
+    let idx = 0, bd = Infinity;
+    for (let i = 0; i < rows.length; i++) {
+      const d = Math.abs(x(i) - px);
+      if (d < bd) { bd = d; idx = i; }
+    }
+    return idx;
+  };
+  let startPx = null;
+  svg.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0 && ev.pointerType === 'mouse') return;
+    startPx = pxOf(ev);
+    try { svg.setPointerCapture(ev.pointerId); } catch { /* 不支援就算了 */ }
+  });
+  svg.addEventListener('pointermove', (ev) => {
+    if (startPx === null) return;
+    const cur = pxOf(ev);
+    if (Math.abs(cur - startPx) > 4) {
+      box.dataset.brushing = '1';
+      sel.setAttribute('visibility', 'visible');
+      sel.setAttribute('x', Math.min(startPx, cur));
+      sel.setAttribute('width', Math.abs(cur - startPx));
+    }
+  });
+  const finish = (ev) => {
+    if (startPx === null) return;
+    const cur = pxOf(ev);
+    sel.setAttribute('visibility', 'hidden');
+    delete box.dataset.brushing;
+    if (Math.abs(cur - startPx) > 8) {
+      const i1 = nearestIdx(Math.min(startPx, cur));
+      const i2 = nearestIdx(Math.max(startPx, cur));
+      if (i2 > i1) setCustomRange(rows[i1].d, rows[i2].d);
+    }
+    startPx = null;
+  };
+  svg.addEventListener('pointerup', finish);
+  svg.addEventListener('pointercancel', () => {
+    sel.setAttribute('visibility', 'hidden');
+    delete box.dataset.brushing;
+    startPx = null;
+  });
+  svg.addEventListener('dblclick', clearCustomRange);
 }
 
 /* ============================== KPI 與表格 ============================== */
@@ -1367,8 +1452,40 @@ function renderTable(rows) {
 /* ============================== 主流程 ============================== */
 function visibleRows() {
   const all = state.rows;
+  if (state.customRange) {
+    const { start, end } = state.customRange;
+    const rows = all.filter((r) => r.d >= start && r.d <= end);
+    if (rows.length >= 2) return rows;
+  }
   if (state.range === 'all') return all;
   return all.slice(Math.max(0, all.length - state.range));
+}
+
+/* 自訂區間：由拖曳或點選圖表產生，所有圖表與 KPI 立即重繪 */
+function setCustomRange(startD, endD) {
+  if (!startD || !endD || startD >= endD) return;
+  state.customRange = { start: startD, end: endD };
+  document.querySelectorAll('.chip[data-range]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+  const chip = $('#customChip');
+  chip.hidden = false;
+  chip.textContent = `${startD} ~ ${endD} ✕`;
+  renderAll();
+}
+function clearCustomRange() {
+  if (!state.customRange) return;
+  state.customRange = null;
+  $('#customChip').hidden = true;
+  const btn = document.querySelector(`.chip[data-range="${state.range}"]`);
+  if (btn) btn.setAttribute('aria-pressed', 'true');
+  renderAll();
+}
+/* 以某日為中心，放大檢視前後 radius 個交易日 */
+function zoomAround(dateISO, radius) {
+  const all = state.rows;
+  const idx = all.findIndex((r) => r.d === dateISO);
+  if (idx < 0) return;
+  const i1 = Math.max(0, idx - radius), i2 = Math.min(all.length - 1, idx + radius);
+  setCustomRange(all[i1].d, all[i2].d);
 }
 
 function renderAll() {
@@ -1384,12 +1501,15 @@ function renderAll() {
 /* 事件 */
 document.querySelectorAll('.chip[data-range]').forEach((btn) => {
   btn.addEventListener('click', () => {
+    state.customRange = null;
+    $('#customChip').hidden = true;
     document.querySelectorAll('.chip[data-range]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
     btn.setAttribute('aria-pressed', 'true');
     state.range = btn.dataset.range === 'all' ? 'all' : Number(btn.dataset.range);
     renderAll();
   });
 });
+$('#customChip').addEventListener('click', clearCustomRange);
 $('#tableToggle').addEventListener('click', () => {
   state.showTable = !state.showTable;
   $('#tableToggle').setAttribute('aria-pressed', String(state.showTable));
