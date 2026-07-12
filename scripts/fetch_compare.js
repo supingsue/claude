@@ -99,8 +99,8 @@ async function fetchEFFR() {
   }
   try { out.fx = await marketDaily('TWD=X', 'usdtwd'); ok++; } catch (e) { console.error(String(e)); fail++; }
   await sleep(800);
-  // ^TNX 報價為殖利率 ×10，除回百分比
-  try { out.dgs10 = (await yahooDaily('^TNX', 0.1)).map((r) => ({ d: r.d, v: +r.c.toFixed(3) })); ok++; }
+  // Yahoo 的 ^TNX 即為殖利率百分比（例 4.57）
+  try { out.dgs10 = (await yahooDaily('^TNX')).map((r) => ({ d: r.d, v: +r.c.toFixed(3) })); ok++; }
   catch (e) { console.error(String(e)); fail++; }
   await sleep(800);
   try { out.dff = await fetchEFFR(); ok++; } catch (e) { console.error(String(e)); fail++; }
