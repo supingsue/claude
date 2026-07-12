@@ -321,7 +321,7 @@
       </div>
       <div>
         <div class="legend">
-          <span class="key"><span class="line-key" style="background:var(--ma5)"></span>Fed 資金利率</span>
+          <span class="key"><span class="line-key" style="background:var(--ma5)"></span>Fed 有效利率(EFFR)</span>
           <span class="key"><span class="line-key" style="background:var(--ma20)"></span>美債 10 年殖利率</span>
           <span class="key"><span class="line-key" style="background:var(--pma20)"></span>台灣重貼現率</span>
         </div>
@@ -1700,7 +1700,7 @@ function renderMacroCharts(rows) {
   const dgs = COMPARE.dgs10.length ? alignSeries(dates, new Map(COMPARE.dgs10.map((r) => [r.d, r.v]))) : [];
   const twp = dates.map((d) => twPolicyAt(d));
   const lines = [];
-  if (dff.length) lines.push({ name: 'Fed 資金利率', color: css('--ma5'), vals: dff });
+  if (dff.length) lines.push({ name: 'Fed 有效利率(EFFR)', color: css('--ma5'), vals: dff });
   if (dgs.length) lines.push({ name: '美債10年', color: css('--ma20'), vals: dgs });
   if (dff.length || dgs.length) lines.push({ name: '台灣重貼現率', color: css('--pma20'), vals: twp });
   drawSimpleLines('#rateChart', 220, rows, lines, (v) => v.toFixed(2), '%');
@@ -1741,7 +1741,7 @@ function renderEcon(rows, series) {
   if (dffLast !== null) {
     const spread = dffLast - twLast;
     econBlock(host, '台美利差與資金流動', '利率平價（Interest Rate Parity）',
-      `目前 Fed 資金利率 ${num(dffLast)}%、台灣重貼現率 ${num(twLast)}%，利差約 ${num(spread)} 個百分點。` +
+      `目前 Fed 有效利率(EFFR) ${num(dffLast)}%、台灣重貼現率 ${num(twLast)}%，利差約 ${num(spread)} 個百分點。` +
       `理論上美元利率明顯高於台幣時，資金傾向流向美元資產、台幣面臨貶值壓力（利差交易）；` +
       (fxChg !== null ? `本區間 USD/TWD 變動 ${num(fxChg, 1)}%（正值＝台幣貶值）。` : '') +
       `利差收斂時則常見資金回流與台幣升值。`);
