@@ -22,6 +22,8 @@
     --ma5: #eda100;
     --ma20: #4a3aa7;
     --pma20: #1baf7a;
+    --cmp-tw: #eb6834;
+    --cmp-ustwd: #e87ba4;
     --seq: #2a78d6;
     --seq-track: #cde2fb;
     --tooltip-bg: #ffffff;
@@ -69,6 +71,8 @@
     --ma5: #c98500;
     --ma20: #9085e9;
     --pma20: #199e70;
+    --cmp-tw: #d95926;
+    --cmp-ustwd: #d55181;
     --seq: #3987e5;
     --seq-track: #184f95;
     --tooltip-bg: #242423;
@@ -169,6 +173,25 @@
   td.up { color: var(--up-text); }
   td.down { color: var(--down-text); }
   .spike-tag { font-size: 11px; border: 1px solid var(--up-text); color: var(--up-text); border-radius: 4px; padding: 0 4px; }
+
+  /* 跨市場比較 */
+  .cmp-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 4px 0 10px; font-size: 13px; color: var(--text-2); }
+  .cmp-controls input[type="text"], .cmp-controls input:not([type]), .cmp-controls select {
+    font: inherit; color: var(--text-1); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; width: 90px;
+  }
+  .cmp-controls select { width: auto; }
+  .cmp-check { display: inline-flex; align-items: center; gap: 6px; }
+  .cmp-msg { font-size: 12px; color: var(--muted); }
+  .macro-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; }
+  @media (max-width: 760px) { .macro-grid { grid-template-columns: 1fr; } }
+  .econ-block { border-top: 1px solid var(--grid); padding: 10px 0; }
+  .econ-block:first-child { border-top: none; }
+  .econ-title { font-size: 13px; font-weight: 650; }
+  .econ-title .theory { color: var(--muted); font-weight: 400; margin-left: 6px; font-size: 12px; }
+  .econ-block p { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
+  .econ-block .num { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-1); }
+  #cmpStats td:first-child .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 6px; vertical-align: baseline; }
 
   /* 買點參考 */
   .sig-checks { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; }
@@ -271,6 +294,46 @@
     <h2>月成交量</h2>
     <p class="desc">各月份成交量加總（張）— 點一下月柱即可放大檢視該月</p>
     <div class="chart-box" id="monthChart"></div>
+  </div>
+
+  <div class="card">
+    <h2>跨市場投資比較</h2>
+    <p class="desc">指數化總報酬（區間起點 = 100，未含股息）：0050 對比自選台股與美股，可切換美股以台幣計價（含匯率損益）。區間跟隨上方選擇 — 橫向拖曳可放大，雙擊重設</p>
+    <div class="cmp-controls">
+      <label>台股代號 <input id="twInput" value="2330" maxlength="6" inputmode="numeric" aria-label="台股代號"></label>
+      <button class="chip" id="twLoad" type="button">載入</button>
+      <label>美股 <select id="usSelect" aria-label="美股代號"></select></label>
+      <label class="cmp-check"><input type="checkbox" id="usTwdChk" checked> 美股以台幣計價</label>
+      <span class="cmp-msg" id="cmpMsg"></span>
+    </div>
+    <div class="legend" id="cmpLegend"></div>
+    <div class="chart-box" id="cmpChart"></div>
+    <div class="table-wrap"><table id="cmpStats"></table></div>
+  </div>
+
+  <div class="card">
+    <h2>匯率與利率</h2>
+    <p class="desc">美元兌新台幣與主要利率（%）— 觀察資金成本與匯率環境。台灣重貼現率為內建政策序列（更新至 2026 年初）</p>
+    <div class="macro-grid">
+      <div>
+        <div class="legend"><span class="key"><span class="line-key" style="background:var(--price)"></span>USD/TWD</span></div>
+        <div class="chart-box" id="fxChart"></div>
+      </div>
+      <div>
+        <div class="legend">
+          <span class="key"><span class="line-key" style="background:var(--ma5)"></span>Fed 資金利率</span>
+          <span class="key"><span class="line-key" style="background:var(--ma20)"></span>美債 10 年殖利率</span>
+          <span class="key"><span class="line-key" style="background:var(--pma20)"></span>台灣重貼現率</span>
+        </div>
+        <div class="chart-box" id="rateChart"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>經濟學視角</h2>
+    <p class="desc">用目前區間的實際數據對照幾個經典理論 — 教學參考用，非投資建議</p>
+    <div id="econBody"></div>
   </div>
 
   <div class="card" id="tableCard" hidden>
@@ -793,6 +856,7 @@ const state = {
   range: 252,         // 交易日數或 'all'
   customRange: null,  // { start, end }（ISO 日期）— 由拖曳或點選圖表產生
   showTable: false,
+  compare: { twNo: '2330', usSym: 'SPY', usTwd: true },
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -812,8 +876,8 @@ function rocDateToISO(s) {
 }
 function numTW(s) { return Number(String(s).replace(/,/g, '')); }
 
-async function fetchTWSEMonth(yyyymm01) {
-  const url = `https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=${yyyymm01}&stockNo=${STOCK_NO}&response=json`;
+async function fetchTWSEMonth(yyyymm01, stockNo = STOCK_NO) {
+  const url = `https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=${yyyymm01}&stockNo=${stockNo}&response=json`;
   const res = await fetch(url, { mode: 'cors' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
@@ -998,6 +1062,7 @@ async function loadData(forceRefresh) {
     label = '示範資料（無法取得行情，非真實資料）';
   }
   const instRows = await loadInst();
+  await loadCompareData();
   state.rows = derive(rows, instRows);
   state.source = kind;
   setBadge(kind, label);
@@ -1348,6 +1413,399 @@ function renderSignal(rows) {
   host.appendChild(note);
 }
 
+/* ============================== 跨市場比較 ============================== */
+/* 台灣央行重貼現率（政策序列，變動不頻繁；更新至 2026 年初） */
+const TW_POLICY = [
+  { d: '2020-03-20', v: 1.125 }, { d: '2022-03-18', v: 1.375 }, { d: '2022-06-17', v: 1.5 },
+  { d: '2022-09-24', v: 1.625 }, { d: '2022-12-16', v: 1.75 }, { d: '2023-03-24', v: 1.875 },
+  { d: '2024-03-22', v: 2.0 },
+];
+let COMPARE = { us: {}, fx: [], dff: [], dgs10: [] };
+
+async function loadCompareData() {
+  try {
+    const res = await fetch('data/compare.json', { cache: 'no-store' });
+    if (!res.ok) return;
+    const j = await res.json();
+    COMPARE = { us: j.us || {}, fx: j.fx || [], dff: j.dff || [], dgs10: j.dgs10 || [] };
+  } catch { /* 快照尚未生成 */ }
+  const sel = $('#usSelect');
+  sel.innerHTML = '';
+  const syms = Object.keys(COMPARE.us);
+  for (const s of (syms.length ? syms : ['（快照尚未生成）'])) {
+    const o = document.createElement('option');
+    o.value = s; o.textContent = s;
+    sel.appendChild(o);
+  }
+  if (syms.includes(state.compare.usSym)) sel.value = state.compare.usSym;
+  else state.compare.usSym = syms[0] || null;
+}
+
+/* 自選台股：按月抓證交所並以 localStorage 快取（歷史月永久、當月當日有效） */
+const twMem = new Map(); // no -> Map(d -> c)
+async function ensureTwRows(no, startD, endD) {
+  if (!twMem.has(no)) twMem.set(no, new Map());
+  const mem = twMem.get(no);
+  const today = new Date().toISOString().slice(0, 10);
+  const curYm = today.slice(0, 7).replace('-', '');
+  const months = [];
+  const t = new Date(startD.slice(0, 7) + '-01T00:00:00');
+  const end = new Date(endD + 'T00:00:00');
+  while (t <= end) {
+    months.push(`${t.getFullYear()}${String(t.getMonth() + 1).padStart(2, '0')}`);
+    t.setMonth(t.getMonth() + 1);
+  }
+  let fetched = 0;
+  for (const ym of months) {
+    const key = `twcmp_${no}_${ym}`;
+    if (mem.has('m' + ym)) continue;
+    let rows = null;
+    try {
+      const cached = JSON.parse(localStorage.getItem(key) || 'null');
+      if (cached && (ym !== curYm || cached.day === today)) rows = cached.rows;
+    } catch { /* 快取壞了就重抓 */ }
+    if (!rows) {
+      $('#cmpMsg').textContent = `讀取 ${no} ${ym.slice(0, 4)}/${ym.slice(4)}…`;
+      rows = await fetchTWSEMonth(ym + '01', no);
+      try { localStorage.setItem(key, JSON.stringify({ day: today, rows: rows.map((r) => ({ d: r.d, c: r.c })) })); } catch { /* 滿了 */ }
+      fetched++;
+      if (fetched > 0) await new Promise((r) => setTimeout(r, 300));
+    }
+    for (const r of rows) mem.set(r.d, r.c);
+    mem.set('m' + ym, true);
+  }
+  $('#cmpMsg').textContent = '';
+  return mem;
+}
+
+/* 對齊：以 0050 交易日為軸，缺值沿用前值 */
+function alignSeries(dates, map) {
+  let last = null;
+  return dates.map((d) => (map.has(d) ? (last = map.get(d)) : last));
+}
+function normalize(vals) {
+  const base = vals.find((v) => v !== null);
+  return base ? vals.map((v) => (v === null ? null : +(v / base * 100).toFixed(2))) : vals;
+}
+function dailyReturns(vals) {
+  const out = [];
+  for (let i = 1; i < vals.length; i++) {
+    out.push(vals[i] !== null && vals[i - 1] !== null ? Math.log(vals[i] / vals[i - 1]) : null);
+  }
+  return out;
+}
+function statPack(vals, baseVals) {
+  const first = vals.find((v) => v !== null), lastV = [...vals].reverse().find((v) => v !== null);
+  const ret = first ? (lastV / first - 1) * 100 : null;
+  const r = dailyReturns(vals), rb = dailyReturns(baseVals);
+  const pairs = r.map((v, i) => [v, rb[i]]).filter(([a, b]) => a !== null && b !== null);
+  const xs = pairs.map((p) => p[0]), ys = pairs.map((p) => p[1]);
+  const mean = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+  let vol = null, corr = null, beta = null;
+  if (xs.length >= 20) {
+    const mx = mean(xs), my = mean(ys);
+    const vx = mean(xs.map((v) => (v - mx) ** 2)), vy = mean(ys.map((v) => (v - my) ** 2));
+    const cov = mean(xs.map((v, i) => (v - mx) * (ys[i] - my)));
+    vol = Math.sqrt(vx * 252) * 100;
+    corr = vx && vy ? cov / Math.sqrt(vx * vy) : null;
+    beta = vy ? cov / vy : null;
+  }
+  return { ret, vol, corr, beta };
+}
+
+let cmpToken = 0;
+async function renderCompareSection() {
+  const my = ++cmpToken;
+  const rows = visibleRows();
+  renderMacroCharts(rows);
+  if (rows.length < 5) { renderEcon(rows, null); return; }
+  const dates = rows.map((r) => r.d);
+  const startD = dates[0], endD = dates[dates.length - 1];
+
+  // 自選台股（瀏覽器直抓證交所；離線/示範模式會失敗 → 略過）
+  let twMap = null;
+  const no = state.compare.twNo;
+  if (no && /^[0-9A-Za-z]{3,6}$/.test(no)) {
+    try { twMap = await ensureTwRows(no, startD, endD); }
+    catch { $('#cmpMsg').textContent = `讀不到台股 ${no}（離線或代號有誤）`; }
+  }
+  if (my !== cmpToken) return; // 期間已有更新的重繪要求
+
+  const fxMap = new Map(COMPARE.fx.map((r) => [r.d, r.c]));
+  const fxAligned = COMPARE.fx.length ? alignSeries(dates, fxMap) : null;
+  const series = [];
+  series.push({ name: '0050', color: css('--price'), vals: normalize(rows.map((r) => r.c)) });
+  if (twMap) {
+    const vals = alignSeries(dates, twMap);
+    if (vals.some((v) => v !== null)) series.push({ name: `台股 ${no}`, color: css('--cmp-tw'), vals: normalize(vals) });
+  }
+  const sym = state.compare.usSym;
+  if (sym && COMPARE.us[sym]) {
+    const usAligned = alignSeries(dates, new Map(COMPARE.us[sym].map((r) => [r.d, r.c])));
+    series.push({ name: `${sym}（美元）`, color: css('--ma20'), vals: normalize(usAligned) });
+    if (state.compare.usTwd && fxAligned) {
+      const twd = usAligned.map((v, i) => (v !== null && fxAligned[i] !== null ? v * fxAligned[i] : null));
+      series.push({ name: `${sym}（台幣計）`, color: css('--cmp-ustwd'), vals: normalize(twd) });
+    }
+  }
+  if (fxAligned) series.push({ name: 'USD/TWD', color: css('--muted'), vals: normalize(fxAligned) });
+
+  drawCmpChart(rows, series);
+  drawCmpStats(series);
+  renderEcon(rows, series);
+}
+
+function drawCmpChart(rows, series) {
+  const box = $('#cmpChart');
+  const { svg, ih, iw } = baseSVG(box, H_VOL);
+  const all = series.flatMap((s) => s.vals).filter((v) => v !== null);
+  if (!all.length) {
+    box.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'chart-empty';
+    p.textContent = '尚無可比較的資料（美股/匯率快照由部署排程生成；台股需可連上證交所）。';
+    box.appendChild(p);
+    return;
+  }
+  const pad = (Math.max(...all) - Math.min(...all)) * 0.06 || 1;
+  const yMin = Math.min(...all) - pad, yMax = Math.max(...all) + pad;
+  const y = (v) => M.top + ih - (v - yMin) / (yMax - yMin) * ih;
+  const x = (i) => M.left + (rows.length === 1 ? iw / 2 : i / (rows.length - 1) * iw);
+  drawYAxis(svg, niceTicks(yMin, yMax, 5), y, iw, (t) => String(Math.round(t)));
+  // 100 基準線
+  if (yMin < 100 && yMax > 100) {
+    el('line', { x1: M.left, x2: M.left + iw, y1: y(100), y2: y(100), stroke: css('--baseline'), 'stroke-width': 1 }, svg);
+  }
+  drawXAxis(svg, rows, x, ih, iw);
+  for (const s of series) {
+    let seg = [];
+    const flush = () => {
+      if (seg.length >= 2) el('polyline', { points: seg.join(' '), fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+      seg = [];
+    };
+    for (let i = 0; i < rows.length; i++) {
+      if (s.vals[i] === null) { flush(); continue; }
+      seg.push(`${x(i).toFixed(1)},${y(s.vals[i]).toFixed(1)}`);
+    }
+    flush();
+  }
+  // 圖例
+  const lg = $('#cmpLegend');
+  lg.innerHTML = '';
+  for (const s of series) {
+    const k = document.createElement('span');
+    k.className = 'key';
+    const sw = document.createElement('span');
+    sw.className = 'line-key';
+    sw.style.background = s.color;
+    k.appendChild(sw);
+    k.appendChild(document.createTextNode(s.name));
+    lg.appendChild(k);
+  }
+  attachCrosshair(box, svg, rows, x, ih, (tt, r, idx) => {
+    for (const s of series) {
+      const v = s.vals[idx];
+      if (v === null) continue;
+      ttRow(tt, s.color, s.name, `${v.toFixed(1)}（${fmtSigned(v - 100, 1)}%）`);
+    }
+  });
+  attachBrush(box, svg, rows, x, ih);
+}
+
+function drawCmpStats(series) {
+  const tbl = $('#cmpStats');
+  tbl.innerHTML = '';
+  const base = series[0];
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  for (const h of ['標的', '區間報酬', '年化波動', '與0050相關', 'Beta(對0050)']) {
+    const th = document.createElement('th'); th.textContent = h; trh.appendChild(th);
+  }
+  thead.appendChild(trh); tbl.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (const s of series) {
+    const st = statPack(s.vals, base.vals);
+    const tr = document.createElement('tr');
+    const td0 = document.createElement('td');
+    const sw = document.createElement('span'); sw.className = 'swatch'; sw.style.background = s.color;
+    td0.appendChild(sw); td0.appendChild(document.createTextNode(s.name));
+    tr.appendChild(td0);
+    const cells = [
+      [st.ret === null ? '—' : fmtSigned(st.ret, 1) + '%', st.ret > 0 ? 'up' : 'down'],
+      [st.vol === null ? '—' : st.vol.toFixed(1) + '%', ''],
+      [s === base ? '1.00' : (st.corr === null ? '—' : st.corr.toFixed(2)), ''],
+      [s === base ? '1.00' : (st.beta === null ? '—' : st.beta.toFixed(2)), ''],
+    ];
+    for (const [text, cls] of cells) {
+      const td = document.createElement('td');
+      td.textContent = text;
+      if (cls) td.className = cls;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  tbl.appendChild(tbody);
+}
+
+/* 匯率與利率小圖 */
+function drawSimpleLines(boxSel, height, rows, lines, yFmt, unit) {
+  const box = $(boxSel);
+  const all = lines.flatMap((l) => l.vals).filter((v) => v !== null);
+  if (all.length < 2) {
+    box.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'chart-empty';
+    p.textContent = '快照尚未生成，部署排程執行後自動出現。';
+    box.appendChild(p);
+    return;
+  }
+  const { svg, ih, iw } = baseSVG(box, height);
+  const pad = (Math.max(...all) - Math.min(...all)) * 0.08 || 0.1;
+  const yMin = Math.min(...all) - pad, yMax = Math.max(...all) + pad;
+  const y = (v) => M.top + ih - (v - yMin) / (yMax - yMin) * ih;
+  const x = (i) => M.left + (rows.length === 1 ? iw / 2 : i / (rows.length - 1) * iw);
+  drawYAxis(svg, niceTicks(yMin, yMax, 4), y, iw, yFmt);
+  drawXAxis(svg, rows, x, ih, iw);
+  for (const l of lines) {
+    let seg = [];
+    const flush = () => {
+      if (seg.length >= 2) el('polyline', { points: seg.join(' '), fill: 'none', stroke: l.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+      seg = [];
+    };
+    for (let i = 0; i < rows.length; i++) {
+      if (l.vals[i] === null) { flush(); continue; }
+      seg.push(`${x(i).toFixed(1)},${y(l.vals[i]).toFixed(1)}`);
+    }
+    flush();
+  }
+  attachCrosshair(box, svg, rows, x, ih, (tt, r, idx) => {
+    for (const l of lines) {
+      if (l.vals[idx] === null) continue;
+      ttRow(tt, l.color, l.name, yFmt(l.vals[idx]) + (unit || ''));
+    }
+  });
+}
+
+function twPolicyAt(d) {
+  let v = TW_POLICY[0].v;
+  for (const p of TW_POLICY) { if (p.d <= d) v = p.v; else break; }
+  return v;
+}
+
+function renderMacroCharts(rows) {
+  const dates = rows.map((r) => r.d);
+  const fx = COMPARE.fx.length ? alignSeries(dates, new Map(COMPARE.fx.map((r) => [r.d, r.c]))) : [];
+  drawSimpleLines('#fxChart', 220, rows, fx.length ? [{ name: 'USD/TWD', color: css('--price'), vals: fx }] : [], (v) => v.toFixed(1));
+  const dff = COMPARE.dff.length ? alignSeries(dates, new Map(COMPARE.dff.map((r) => [r.d, r.v]))) : [];
+  const dgs = COMPARE.dgs10.length ? alignSeries(dates, new Map(COMPARE.dgs10.map((r) => [r.d, r.v]))) : [];
+  const twp = dates.map((d) => twPolicyAt(d));
+  const lines = [];
+  if (dff.length) lines.push({ name: 'Fed 資金利率', color: css('--ma5'), vals: dff });
+  if (dgs.length) lines.push({ name: '美債10年', color: css('--ma20'), vals: dgs });
+  if (dff.length || dgs.length) lines.push({ name: '台灣重貼現率', color: css('--pma20'), vals: twp });
+  drawSimpleLines('#rateChart', 220, rows, lines, (v) => v.toFixed(2), '%');
+}
+
+/* 經濟學視角：以當前區間數據對照理論 */
+function econBlock(host, title, theory, text) {
+  const div = document.createElement('div');
+  div.className = 'econ-block';
+  const h = document.createElement('div');
+  h.className = 'econ-title';
+  h.textContent = title;
+  const th = document.createElement('span');
+  th.className = 'theory';
+  th.textContent = theory;
+  h.appendChild(th);
+  const p = document.createElement('p');
+  p.innerHTML = text; // 內容全為本地計算數字與固定文案
+  div.appendChild(h); div.appendChild(p);
+  host.appendChild(div);
+}
+const num = (v, d = 2) => `<span class="num">${v.toFixed ? v.toFixed(d) : v}</span>`;
+
+function renderEcon(rows, series) {
+  const host = $('#econBody');
+  host.innerHTML = '';
+  const dates = rows.map((r) => r.d);
+  const startD = dates[0], endD = dates[dates.length - 1];
+
+  const lastOf = (arr, k) => arr.length ? arr[arr.length - 1][k] : null;
+  const dffLast = lastOf(COMPARE.dff, 'v');
+  const dgsSeries = COMPARE.dgs10.filter((r) => r.d >= startD && r.d <= endD);
+  const twLast = twPolicyAt(endD);
+  const fxWin = COMPARE.fx.filter((r) => r.d >= startD && r.d <= endD);
+  const fxChg = fxWin.length >= 2 ? (fxWin[fxWin.length - 1].c / fxWin[0].c - 1) * 100 : null;
+
+  // 1. 利率平價與資金流動
+  if (dffLast !== null) {
+    const spread = dffLast - twLast;
+    econBlock(host, '台美利差與資金流動', '利率平價（Interest Rate Parity）',
+      `目前 Fed 資金利率 ${num(dffLast)}%、台灣重貼現率 ${num(twLast)}%，利差約 ${num(spread)} 個百分點。` +
+      `理論上美元利率明顯高於台幣時，資金傾向流向美元資產、台幣面臨貶值壓力（利差交易）；` +
+      (fxChg !== null ? `本區間 USD/TWD 變動 ${num(fxChg, 1)}%（正值＝台幣貶值）。` : '') +
+      `利差收斂時則常見資金回流與台幣升值。`);
+  }
+
+  // 2. 匯率與出口導向股市
+  if (fxWin.length >= 20) {
+    const fxMap = new Map(COMPARE.fx.map((r) => [r.d, r.c]));
+    const fxAligned = alignSeries(dates, fxMap);
+    const st = statPack(fxAligned, rows.map((r) => r.c));
+    econBlock(host, '匯率與台股的連動', '出口導向經濟與資本流動',
+      `本區間 0050 日報酬與 USD/TWD 變動的相關係數為 ${num(st.corr ?? 0)}。` +
+      `台灣是出口導向經濟：台幣貶值有利電子出口報價競爭力（利多面），但也常伴隨外資賣股匯出（資本外流的利空面），兩股力量方向相反，相關係數的正負與大小反映了當前哪股力量佔上風。`);
+  }
+
+  // 3. 利率與估值
+  if (dgsSeries.length >= 2) {
+    const bp = (dgsSeries[dgsSeries.length - 1].v - dgsSeries[0].v) * 100;
+    econBlock(host, '利率與股票估值', '折現現金流（DCF）／戈登成長模型',
+      `美債 10 年殖利率本區間變動 ${num(bp, 0)} 個基點（目前 ${num(dgsSeries[dgsSeries.length - 1].v)}%）。` +
+      `股價理論上等於未來現金流以折現率折現的現值：長天期利率上升會壓低估值，且對現金流集中在遠期的高成長股（多數美股科技股）衝擊大於高股息資產（如 0050 這類大盤 ETF），反之亦然。`);
+  }
+
+  // 4. 分散投資（MPT）
+  if (series && series.length >= 3) {
+    const usSeries = series.find((s) => s.name.includes('美元')) || series.find((s) => s.name.includes('台幣計'));
+    if (usSeries) {
+      const st = statPack(usSeries.vals, series[0].vals);
+      if (st.corr !== null) {
+        econBlock(host, '跨市場分散的效益', '現代投資組合理論（Markowitz, MPT）',
+          `本區間 ${usSeries.name} 與 0050 的日報酬相關係數為 ${num(st.corr)}。` +
+          `MPT 指出：只要兩資產相關係數小於 1，組合的波動就低於各自波動的加權平均——相關係數越低，「免費的午餐」（同報酬下更低風險）越多。可搭配上方統計表的年化波動與 Beta 評估配置比例。`);
+      }
+    }
+  }
+
+  // 5. 匯率風險拆解
+  if (series) {
+    const us = series.find((s) => s.name.includes('美元'));
+    const usTwd = series.find((s) => s.name.includes('台幣計'));
+    if (us && usTwd && fxChg !== null) {
+      const usRet = statPack(us.vals, series[0].vals).ret;
+      const usTwdRet = statPack(usTwd.vals, series[0].vals).ret;
+      if (usRet !== null && usTwdRet !== null) {
+        econBlock(host, '海外投資的匯率風險拆解', '購買力與匯率風險（近似：台幣報酬 ≈ 美元報酬 + 匯率變動）',
+          `${us.name.replace('（美元）', '')} 本區間美元報酬 ${num(usRet, 1)}%、匯率變動 ${num(fxChg, 1)}%，台幣計價總報酬 ${num(usTwdRet, 1)}%。` +
+          `對台灣投資人而言，投資美股同時承擔「股價」與「美元匯率」兩種風險：台幣貶值放大台幣計報酬、升值則侵蝕之。`);
+      }
+    }
+  }
+
+  if (!host.children.length) {
+    const p = document.createElement('p');
+    p.className = 'chart-empty';
+    p.textContent = '需要匯率／利率快照（由部署排程生成）才能計算，稍後再回來看看。';
+    host.appendChild(p);
+  } else {
+    const note = document.createElement('p');
+    note.className = 'sig-note';
+    note.textContent = '以上為教科書層級的簡化框架，實際市場受多重因素影響，數據關係會隨區間改變，僅供學習參考，不構成投資建議。';
+    host.appendChild(note);
+  }
+}
+
 /* --- 量價散佈圖 --- */
 function renderScatter(rows) {
   const box = $('#scatterChart');
@@ -1529,7 +1987,7 @@ function attachCrosshair(box, svg, rows, x, ih, fillTT) {
     dEl.className = 'tt-date';
     dEl.textContent = `${r.d}（${'日一二三四五六'[new Date(r.d + 'T00:00:00').getDay()]}）`;
     tt.appendChild(dEl);
-    fillTT(tt, r);
+    fillTT(tt, r, idx);
     positionTooltip(box, tt, x(idx) / scale);
   });
   svg.addEventListener('pointerleave', () => {
@@ -1720,6 +2178,7 @@ function renderAll() {
   renderSignal(rows);
   renderScatter(rows);
   renderMonthChart(rows);
+  renderCompareSection(); // 非同步：台股資料就緒後自行補繪
   if (state.showTable) renderTable(rows);
 }
 
@@ -1735,6 +2194,21 @@ document.querySelectorAll('.chip[data-range]').forEach((btn) => {
   });
 });
 $('#customChip').addEventListener('click', clearCustomRange);
+$('#twLoad').addEventListener('click', () => {
+  const no = $('#twInput').value.trim().toUpperCase();
+  if (!/^[0-9A-Z]{3,6}$/.test(no)) { $('#cmpMsg').textContent = '請輸入 3–6 碼台股代號'; return; }
+  state.compare.twNo = no;
+  renderCompareSection();
+});
+$('#twInput').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') $('#twLoad').click(); });
+$('#usSelect').addEventListener('change', () => {
+  state.compare.usSym = $('#usSelect').value;
+  renderCompareSection();
+});
+$('#usTwdChk').addEventListener('change', () => {
+  state.compare.usTwd = $('#usTwdChk').checked;
+  renderCompareSection();
+});
 $('#tableToggle').addEventListener('click', () => {
   state.showTable = !state.showTable;
   $('#tableToggle').setAttribute('aria-pressed', String(state.showTable));

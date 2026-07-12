@@ -30,6 +30,9 @@ jobs:
       - name: 抓取三大法人買賣超（增量累積）
         run: node scripts/fetch_inst.js
 
+      - name: 抓取跨市場比較資料（美股/匯率/利率）
+        run: node scripts/fetch_compare.js
+
       - name: 提交資料快照
         run: |
           if [ -n "$(git status --porcelain data/)" ]; then
@@ -48,6 +51,7 @@ jobs:
           cp index.html _site/
           cp data/0050.json _site/data/
           cp data/0050_inst.json _site/data/ 2>/dev/null || echo '{"rows":[]}' > _site/data/0050_inst.json
+          cp data/compare.json _site/data/ 2>/dev/null || echo '{"us":{},"fx":[],"dff":[],"dgs10":[]}' > _site/data/compare.json
           touch _site/.nojekyll
           cd _site
           git init -b gh-pages
