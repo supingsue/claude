@@ -27,12 +27,15 @@ jobs:
       - name: 抓取證交所 0050 日成交資料
         run: node scripts/fetch_data.js
 
+      - name: 抓取三大法人買賣超（增量累積）
+        run: node scripts/fetch_inst.js
+
       - name: 提交資料快照
         run: |
-          if [ -n "$(git status --porcelain data/0050.json)" ]; then
+          if [ -n "$(git status --porcelain data/)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add data/0050.json
+            git add data/
             git commit -m "更新 0050 資料快照"
             git push
           else
@@ -44,6 +47,7 @@ jobs:
           mkdir -p _site/data
           cp index.html _site/
           cp data/0050.json _site/data/
+          cp data/0050_inst.json _site/data/ 2>/dev/null || echo '{"rows":[]}' > _site/data/0050_inst.json
           touch _site/.nojekyll
           cd _site
           git init -b gh-pages

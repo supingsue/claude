@@ -21,6 +21,7 @@
     --price: #2a78d6;
     --ma5: #eda100;
     --ma20: #4a3aa7;
+    --pma20: #1baf7a;
     --seq: #2a78d6;
     --seq-track: #cde2fb;
     --tooltip-bg: #ffffff;
@@ -67,6 +68,7 @@
     --price: #3987e5;
     --ma5: #c98500;
     --ma20: #9085e9;
+    --pma20: #199e70;
     --seq: #3987e5;
     --seq-track: #184f95;
     --tooltip-bg: #242423;
@@ -168,6 +170,20 @@
   td.down { color: var(--down-text); }
   .spike-tag { font-size: 11px; border: 1px solid var(--up-text); color: var(--up-text); border-radius: 4px; padding: 0 4px; }
 
+  /* 買點參考 */
+  .sig-checks { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; }
+  .sig-check { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+  .sig-check .mark { font-weight: 700; width: 16px; text-align: center; }
+  .sig-check .mark.ok { color: var(--up-text); }
+  .sig-check .mark.no { color: var(--muted); }
+  .sig-verdict { font-size: 15px; font-weight: 650; margin: 4px 0 2px; }
+  .sig-verdict .tag { display: inline-block; padding: 2px 12px; border-radius: 999px; font-size: 13px; }
+  .sig-verdict .tag.bull { background: var(--up); color: #fff; }
+  .sig-verdict .tag.neutral { background: var(--baseline); color: var(--text-1); }
+  .sig-stats { font-size: 13px; color: var(--text-2); margin-top: 8px; }
+  .sig-note { font-size: 12px; color: var(--muted); margin-top: 10px; border-top: 1px solid var(--grid); padding-top: 8px; }
+  .chart-empty { font-size: 13px; color: var(--muted); padding: 24px 0 28px; }
+
   .note { font-size: 12px; color: var(--muted); margin-top: 20px; }
   .note a { color: var(--text-2); }
   .status-line { font-size: 12px; color: var(--muted); min-height: 18px; margin: -8px 0 10px; }
@@ -202,6 +218,11 @@
   <div class="card">
     <h2>收盤價走勢</h2>
     <p class="desc">日收盤價（元）— 滑鼠移入查看明細；橫向拖曳可放大任意區間，雙擊重設</p>
+    <div class="legend">
+      <span class="key"><span class="line-key" style="background:var(--price)"></span>收盤價</span>
+      <span class="key"><span class="line-key" style="background:var(--pma20)"></span>20日均價</span>
+      <span class="key"><span style="color:var(--up-text);font-size:11px">▲</span>買點參考訊號</span>
+    </div>
     <div class="chart-box" id="priceChart"></div>
   </div>
 
@@ -216,6 +237,24 @@
       <span class="key"><span class="ring-key"></span>爆量日</span>
     </div>
     <div class="chart-box" id="volChart"></div>
+  </div>
+
+  <div class="card">
+    <h2>三大法人與散戶買賣變化（累計買賣超）</h2>
+    <p class="desc">自區間起點累計的買賣超（張）；散戶（含其他）為推估值 = −（三大法人合計）。資料由每日排程自證交所 T86 累積，涵蓋範圍見圖 — 橫向拖曳可放大區間，雙擊重設</p>
+    <div class="legend">
+      <span class="key"><span class="line-key" style="background:var(--price)"></span>外資</span>
+      <span class="key"><span class="line-key" style="background:var(--ma5)"></span>投信</span>
+      <span class="key"><span class="line-key" style="background:var(--ma20)"></span>自營商</span>
+      <span class="key"><span class="line-key" style="background:var(--muted)"></span>散戶（含其他，推估）</span>
+    </div>
+    <div class="chart-box" id="instChart"></div>
+  </div>
+
+  <div class="card" id="signalCard">
+    <h2>買點參考訊號</h2>
+    <p class="desc">規則型技術訊號，同時滿足三條件時於價格圖標記 ▲：① 收盤站上 20 日均價且 5 日均價 &gt; 20 日均價 ② 價漲量增（上漲且量比 &gt; 1.2）③ 三大法人近 5 日合計淨買超（無法人資料時略過此條件）</p>
+    <div id="signalBody"></div>
   </div>
 
   <div class="card">
@@ -828,9 +867,10 @@ function saveCache(rows) {
   } catch { /* 容量滿就算了 */ }
 }
 
-/* 衍生欄位：漲跌、均量、量比、爆量 */
-function derive(raw) {
+/* 衍生欄位：漲跌、均量、量比、爆量、均價、法人、買點訊號 */
+function derive(raw, instRows) {
   const rows = raw.map((r) => ({ ...r }));
+  const instMap = new Map((instRows || []).map((r) => [r.d, r]));
   for (let i = 0; i < rows.length; i++) {
     const prev = i > 0 ? rows[i - 1].c : rows[i].o;
     rows[i].chg = +(rows[i].c - prev).toFixed(2);
@@ -844,8 +884,42 @@ function derive(raw) {
     const p5avg = prev5.length ? prev5.reduce((s, r) => s + r.v, 0) / prev5.length : rows[i].v;
     rows[i].ratio = +(rows[i].v / p5avg).toFixed(2);
     rows[i].spike = i >= 19 && rows[i].v > rows[i].vma20 * 2;
+    // 均價（5 / 20 日收盤均線）
+    rows[i].pma5 = +(w5.reduce((s, r) => s + r.c, 0) / w5.length).toFixed(2);
+    rows[i].pma20 = +(w20.reduce((s, r) => s + r.c, 0) / w20.length).toFixed(2);
+    // 三大法人買賣超（張）；散戶（含其他）= 三大法人合計的反向推估
+    const inst = instMap.get(rows[i].d);
+    if (inst) {
+      rows[i].instF = inst.f; rows[i].instT = inst.t; rows[i].instD = inst.dl;
+      rows[i].instTotal = inst.f + inst.t + inst.dl;
+      rows[i].retail = -rows[i].instTotal;
+    } else {
+      rows[i].instF = rows[i].instT = rows[i].instD = rows[i].instTotal = rows[i].retail = null;
+    }
+    // 近 5 個有法人資料的交易日合計淨買超（不足 3 筆視為無資料）
+    const iw = rows.slice(Math.max(0, i - 4), i + 1).map((r) => r.instTotal).filter((v) => v !== null);
+    rows[i].inst5 = iw.length >= 3 ? iw.reduce((s, v) => s + v, 0) : null;
+  }
+  for (let i = 0; i < rows.length; i++) {
+    // 買點參考訊號：站上月線且短均在上 + 價漲量增 + 法人近5日淨買超（無資料則略過）
+    rows[i].buySig = i >= 19 &&
+      rows[i].c > rows[i].pma20 && rows[i].pma5 > rows[i].pma20 &&
+      rows[i].up && rows[i].ratio > 1.2 &&
+      (rows[i].inst5 === null || rows[i].inst5 > 0);
+    // 訊號後 20 個交易日報酬（回測用）
+    rows[i].ret20 = i + 20 < rows.length ? +(((rows[i + 20].c - rows[i].c) / rows[i].c) * 100).toFixed(2) : null;
   }
   return rows;
+}
+
+/* 讀取同站的法人買賣超快照（排程每日累積） */
+async function loadInst() {
+  try {
+    const res = await fetch('data/0050_inst.json', { cache: 'no-store' });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json.rows) ? json.rows : [];
+  } catch { return []; }
 }
 
 /* 讀取同站的每日資料快照（GitHub Actions 產生的 data/0050.json） */
@@ -923,7 +997,8 @@ async function loadData(forceRefresh) {
     kind = 'demo';
     label = '示範資料（無法取得行情，非真實資料）';
   }
-  state.rows = derive(rows);
+  const instRows = await loadInst();
+  state.rows = derive(rows, instRows);
   state.source = kind;
   setBadge(kind, label);
   renderAll();
@@ -1050,10 +1125,25 @@ function renderPriceChart(rows) {
     points: `${M.left},${M.top + ih} ${linePts} ${M.left + iw},${M.top + ih}`,
     fill: css('--price'), opacity: 0.1,
   }, svg);
+  // 20 日均價線
+  el('polyline', {
+    points: rows.map((r, i) => `${x(i).toFixed(1)},${y(r.pma20).toFixed(1)}`).join(' '),
+    fill: 'none', stroke: css('--pma20'),
+    'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+  }, svg);
   el('polyline', {
     points: linePts, fill: 'none', stroke: css('--price'),
     'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
   }, svg);
+  // 買點參考訊號 ▲（標在當日最低價下方）
+  for (let i = 0; i < rows.length; i++) {
+    if (!rows[i].buySig) continue;
+    const tx = x(i), ty = y(rows[i].l) + 6;
+    el('path', {
+      d: `M${tx},${ty} l-4.5,7 h9 Z`,
+      fill: css('--up'), stroke: css('--surface-1'), 'stroke-width': 1,
+    }, svg);
+  }
   // 末端點 + 直接標籤
   const last = rows[rows.length - 1];
   el('circle', { cx: x(rows.length - 1), cy: y(last.c), r: 4.5, fill: css('--price'), stroke: css('--surface-1'), 'stroke-width': 2 }, svg);
@@ -1062,12 +1152,14 @@ function renderPriceChart(rows) {
 
   attachCrosshair(box, svg, rows, x, ih, (tt, r) => {
     ttRow(tt, css('--price'), '收盤', r.c.toFixed(2), null);
+    ttRow(tt, css('--pma20'), '20日均價', r.pma20.toFixed(2));
     ttRow(tt, null, '開盤', r.o.toFixed(2));
     ttRow(tt, null, '最高', r.h.toFixed(2));
     ttRow(tt, null, '最低', r.l.toFixed(2));
     ttRow(tt, null, '漲跌', `${fmtSigned(r.chg)} (${fmtSigned(r.chgPct)}%)`, r.up ? 'up' : 'down');
     ttRow(tt, null, '成交量', fmtInt(r.v) + ' 張');
     ttRow(tt, null, '量比', r.ratio.toFixed(2));
+    if (r.buySig) ttRow(tt, null, '訊號', '▲ 買點參考', 'up');
   });
   attachBrush(box, svg, rows, x, ih);
 }
@@ -1123,6 +1215,137 @@ function renderVolChart(rows) {
     if (r.spike) ttRow(tt, null, '狀態', '⚠ 爆量（>20日均量2倍）');
   });
   attachBrush(box, svg, rows, x, ih);
+}
+
+/* --- 三大法人與散戶：累計買賣超折線 --- */
+function renderInstChart(rows) {
+  const box = $('#instChart');
+  const hasData = rows.filter((r) => r.instTotal !== null);
+  if (hasData.length < 2) {
+    box.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'chart-empty';
+    p.textContent = '此區間尚無法人買賣超資料。資料由每日排程自證交所累積（每次最多回補 30 個交易日），前幾天會逐步補齊，稍後再回來看看。';
+    box.appendChild(p);
+    return;
+  }
+  const { svg, ih, iw } = baseSVG(box, H_VOL);
+  // 自區間起點累計；沒有法人資料的日子沿用前值（null 起頭略過）
+  const series = { f: [], t: [], dl: [], retail: [] };
+  let cf = 0, ct = 0, cd = 0, started = false;
+  for (const r of rows) {
+    if (r.instTotal !== null) { started = true; cf += r.instF; ct += r.instT; cd += r.instD; }
+    series.f.push(started ? cf : null);
+    series.t.push(started ? ct : null);
+    series.dl.push(started ? cd : null);
+    series.retail.push(started ? -(cf + ct + cd) : null);
+  }
+  const allVals = Object.values(series).flat().filter((v) => v !== null);
+  const vMin = Math.min(0, ...allVals), vMax = Math.max(0, ...allVals);
+  const pad = (vMax - vMin) * 0.08 || 1;
+  const y = (v) => M.top + ih - (v - (vMin - pad)) / ((vMax + pad) - (vMin - pad)) * ih;
+  const x = (i) => M.left + (rows.length === 1 ? iw / 2 : i / (rows.length - 1) * iw);
+
+  for (const t of niceTicks(vMin - pad, vMax + pad, 5)) {
+    el('line', { x1: M.left, x2: M.left + iw, y1: y(t), y2: y(t), stroke: t === 0 ? css('--baseline') : css('--grid'), 'stroke-width': 1 }, svg);
+    el('text', { x: M.left - 8, y: y(t) + 4, 'text-anchor': 'end', 'font-size': 11, fill: css('--muted') }, svg)
+      .textContent = (t < 0 ? '-' : '') + fmtVol(Math.abs(t));
+  }
+  drawXAxis(svg, rows, x, ih, iw);
+
+  const colors = { f: css('--price'), t: css('--ma5'), dl: css('--ma20'), retail: css('--muted') };
+  for (const key of ['retail', 'dl', 't', 'f']) { // 外資最後畫，蓋在最上層
+    // null 段切開，只畫有資料的連續區段
+    let seg = [];
+    const flush = () => {
+      if (seg.length >= 2) {
+        el('polyline', { points: seg.join(' '), fill: 'none', stroke: colors[key], 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+      }
+      seg = [];
+    };
+    for (let i = 0; i < rows.length; i++) {
+      if (series[key][i] === null) { flush(); continue; }
+      seg.push(`${x(i).toFixed(1)},${y(series[key][i]).toFixed(1)}`);
+    }
+    flush();
+  }
+
+  const names = { f: '外資', t: '投信', dl: '自營商', retail: '散戶(推估)' };
+  attachCrosshair(box, svg, rows, x, ih, (tt, r) => {
+    const i = rows.indexOf(r);
+    if (r.instTotal === null) { ttRow(tt, null, '法人資料', '本日無資料'); return; }
+    for (const key of ['f', 't', 'dl', 'retail']) {
+      const daily = key === 'retail' ? r.retail : r[{ f: 'instF', t: 'instT', dl: 'instD' }[key]];
+      const cum = series[key][i];
+      ttRow(tt, colors[key], names[key], `${fmtSigned(daily, 0)} 張｜累計 ${fmtSigned(cum ?? 0, 0)}`);
+    }
+  });
+  attachBrush(box, svg, rows, x, ih);
+}
+
+/* --- 買點參考訊號卡 --- */
+function renderSignal(rows) {
+  const host = $('#signalBody');
+  host.innerHTML = '';
+  if (rows.length < 21) {
+    const p = document.createElement('p');
+    p.className = 'chart-empty';
+    p.textContent = '資料不足（需至少 21 個交易日）。';
+    host.appendChild(p);
+    return;
+  }
+  const last = rows[rows.length - 1];
+  const checks = [
+    { ok: last.c > last.pma20 && last.pma5 > last.pma20, label: `收盤（${last.c.toFixed(2)}）站上 20 日均價（${last.pma20.toFixed(2)}）且 5 日均價在上` },
+    { ok: last.up && last.ratio > 1.2, label: `價漲量增：漲跌 ${fmtSigned(last.chgPct)}%、量比 ${last.ratio.toFixed(2)}` },
+    { ok: last.inst5 === null ? null : last.inst5 > 0, label: last.inst5 === null ? '三大法人近 5 日淨買超：尚無足夠法人資料，此條件略過' : `三大法人近 5 日合計 ${fmtSigned(last.inst5, 0)} 張` },
+  ];
+  const wrap = document.createElement('div');
+  wrap.className = 'sig-checks';
+  for (const c of checks) {
+    const row = document.createElement('div');
+    row.className = 'sig-check';
+    const mark = document.createElement('span');
+    mark.className = 'mark ' + (c.ok ? 'ok' : 'no');
+    mark.textContent = c.ok === null ? '–' : (c.ok ? '✓' : '✗');
+    const txt = document.createElement('span');
+    txt.textContent = c.label;
+    row.appendChild(mark); row.appendChild(txt);
+    wrap.appendChild(row);
+  }
+  host.appendChild(wrap);
+
+  const okCount = checks.filter((c) => c.ok === true).length;
+  const applicable = checks.filter((c) => c.ok !== null).length;
+  const verdict = document.createElement('div');
+  verdict.className = 'sig-verdict';
+  const tag = document.createElement('span');
+  const bullish = okCount === applicable && applicable >= 2;
+  tag.className = 'tag ' + (bullish ? 'bull' : 'neutral');
+  tag.textContent = bullish ? `最新交易日（${last.d}）符合買點參考條件` : `最新交易日（${last.d}）未全數符合（${okCount}/${applicable}），建議觀望等待訊號`;
+  verdict.appendChild(tag);
+  host.appendChild(verdict);
+
+  // 區間內訊號回測（訊號日後 20 個交易日報酬）
+  const sigs = rows.filter((r) => r.buySig);
+  const withRet = sigs.filter((r) => r.ret20 !== null);
+  const stats = document.createElement('p');
+  stats.className = 'sig-stats';
+  if (!sigs.length) {
+    stats.textContent = '目前區間內沒有出現過買點參考訊號。可切換較長區間觀察。';
+  } else if (!withRet.length) {
+    stats.textContent = `目前區間內出現 ${sigs.length} 次訊號（均在近 20 個交易日內，尚無法計算後續報酬）。`;
+  } else {
+    const avg = withRet.reduce((s, r) => s + r.ret20, 0) / withRet.length;
+    const win = withRet.filter((r) => r.ret20 > 0).length;
+    stats.textContent = `目前區間內出現 ${sigs.length} 次訊號（▲ 標於價格圖）。其中 ${withRet.length} 次可回測：訊號後 20 個交易日平均報酬 ${fmtSigned(avg)}%、上漲機率 ${(win / withRet.length * 100).toFixed(0)}%。`;
+  }
+  host.appendChild(stats);
+
+  const note = document.createElement('p');
+  note.className = 'sig-note';
+  note.textContent = '本訊號為簡化的規則型技術指標，僅供研究參考，過去表現不代表未來績效，不構成任何投資建議。0050 為指數型 ETF，長期投資人常以定期定額取代擇時進場。';
+  host.appendChild(note);
 }
 
 /* --- 量價散佈圖 --- */
@@ -1493,6 +1716,8 @@ function renderAll() {
   renderKPIs(rows);
   renderPriceChart(rows);
   renderVolChart(rows);
+  renderInstChart(rows);
+  renderSignal(rows);
   renderScatter(rows);
   renderMonthChart(rows);
   if (state.showTable) renderTable(rows);
