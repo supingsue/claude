@@ -336,6 +336,19 @@
     <div id="econBody"></div>
   </div>
 
+  <div class="card">
+    <h2>過去十年誰打敗 0050？</h2>
+    <p class="desc">近 10 年總報酬年化排名（Yahoo 還原股價，含股息與分割調整、月資料）。樣本為台灣50主要成分股與市場知名中大型股約 45 檔，非全市場掃描</p>
+    <div class="sig-verdict" id="beatSummary"></div>
+    <div class="legend">
+      <span class="key"><span class="swatch" style="background:var(--price)"></span>打敗 0050</span>
+      <span class="key"><span class="swatch" style="background:var(--ma5)"></span>0050 基準</span>
+      <span class="key"><span class="swatch" style="background:var(--baseline)"></span>落後 0050</span>
+    </div>
+    <div class="chart-box" id="beatChart"></div>
+    <p class="sig-note" id="beatNote"></p>
+  </div>
+
   <div class="card" id="tableCard" hidden>
     <h2>每日明細</h2>
     <p class="desc">目前區間的每日價量資料（新到舊）</p>
@@ -1063,6 +1076,7 @@ async function loadData(forceRefresh) {
   }
   const instRows = await loadInst();
   await loadCompareData();
+  await loadBeat();
   state.rows = derive(rows, instRows);
   state.source = kind;
   setBadge(kind, label);
@@ -1806,6 +1820,108 @@ function renderEcon(rows, series) {
   }
 }
 
+/* ============================== 十年報酬對決 ============================== */
+let BEAT = null;
+async function loadBeat() {
+  try {
+    const res = await fetch('data/beat0050.json', { cache: 'no-store' });
+    if (!res.ok) return;
+    const j = await res.json();
+    if (Array.isArray(j.rows) && j.rows.length) BEAT = j;
+  } catch { /* 快照尚未生成 */ }
+}
+
+function renderBeat() {
+  const box = $('#beatChart');
+  const summary = $('#beatSummary');
+  const note = $('#beatNote');
+  if (!BEAT || !BEAT.base) {
+    box.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'chart-empty';
+    p.textContent = '十年報酬快照尚未生成，部署排程執行後自動出現。';
+    box.appendChild(p);
+    summary.textContent = '';
+    note.textContent = '';
+    return;
+  }
+  const rows = BEAT.rows;
+  const base = BEAT.base;
+  const beat = rows.filter((r) => r.no !== '0050' && r.mult > base.mult);
+
+  summary.innerHTML = '';
+  const tag = document.createElement('span');
+  tag.className = 'tag neutral';
+  tag.textContent = `${rows.length - 1} 檔候選中有 ${beat.length} 檔打敗 0050（0050 十年 ${base.mult.toFixed(1)} 倍、年化 ${fmtSigned(base.cagr, 1)}%）`;
+  summary.appendChild(tag);
+
+  // 橫向長條圖：年化報酬（CAGR）排序
+  const rowH = 24, labelW = 118, valueW = 118;
+  const height = M.top + rows.length * rowH + 30;
+  box.innerHTML = '';
+  const width = Math.max(320, box.clientWidth || 900);
+  const svg = el('svg', { viewBox: `0 0 ${width} ${height}`, width, height, role: 'img' });
+  box.appendChild(svg);
+  const iw = width - labelW - valueW - 8;
+  const cMin = Math.min(0, ...rows.map((r) => r.cagr));
+  const cMax = Math.max(...rows.map((r) => r.cagr)) * 1.02;
+  const x = (v) => labelW + (v - cMin) / (cMax - cMin) * iw;
+  const x0 = x(0);
+
+  // 0050 基準參考線
+  el('line', { x1: x(base.cagr), x2: x(base.cagr), y1: M.top - 4, y2: M.top + rows.length * rowH + 4, stroke: css('--ma5'), 'stroke-width': 1.5 }, svg);
+  el('text', { x: x(base.cagr), y: M.top + rows.length * rowH + 20, 'text-anchor': 'middle', 'font-size': 11, fill: css('--muted') }, svg)
+    .textContent = `0050 年化 ${fmtSigned(base.cagr, 1)}%`;
+
+  const tt = makeTooltip(box);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const yTop = M.top + i * rowH + 3;
+    const bh = rowH - 7;
+    const is0050 = r.no === '0050';
+    const color = is0050 ? css('--ma5') : (r.mult > base.mult ? css('--price') : css('--baseline'));
+    const bx = Math.min(x0, x(r.cagr)), bw2 = Math.abs(x(r.cagr) - x0);
+    const rr = Math.min(4, bh / 2, bw2);
+    // 名稱
+    el('text', { x: labelW - 8, y: yTop + bh / 2 + 4, 'text-anchor': 'end', 'font-size': 12, fill: css(is0050 ? '--text-1' : '--text-2'), 'font-weight': is0050 ? 700 : 400 }, svg)
+      .textContent = `${r.name} ${r.no}`;
+    // 長條（資料端 4px 圓角、基線端方角）
+    const d = r.cagr >= 0
+      ? `M${bx},${yTop} H${bx + bw2 - rr} Q${bx + bw2},${yTop} ${bx + bw2},${yTop + rr} V${yTop + bh - rr} Q${bx + bw2},${yTop + bh} ${bx + bw2 - rr},${yTop + bh} H${bx} Z`
+      : `M${bx + bw2},${yTop} H${bx + rr} Q${bx},${yTop} ${bx},${yTop + rr} V${yTop + bh - rr} Q${bx},${yTop + bh} ${bx + rr},${yTop + bh} H${bx + bw2} Z`;
+    const bar = el('path', { d, fill: color }, svg);
+    // 數值直接標籤（倍數 + 年化）
+    el('text', { x: x(Math.max(r.cagr, 0)) + 6, y: yTop + bh / 2 + 4, 'text-anchor': 'start', 'font-size': 11.5, fill: css('--text-1'), 'font-weight': 600 }, svg)
+      .textContent = `${r.mult.toFixed(1)}倍｜${fmtSigned(r.cagr, 1)}%/年`;
+    // hover
+    const hit = el('rect', { x: 0, y: M.top + i * rowH, width, height: rowH, fill: 'transparent' }, svg);
+    const show = () => {
+      bar.setAttribute('fill-opacity', '0.8');
+      tt.style.display = 'block';
+      tt.innerHTML = '';
+      const dEl = document.createElement('div');
+      dEl.className = 'tt-date';
+      dEl.textContent = `${r.name}（${r.no}）${r.from.slice(0, 7)} ~ ${r.to.slice(0, 7)}`;
+      tt.appendChild(dEl);
+      ttRow(tt, color, '十年總報酬', `${r.mult.toFixed(2)} 倍`);
+      ttRow(tt, null, '年化報酬', `${fmtSigned(r.cagr, 1)}%`);
+      ttRow(tt, null, 'vs 0050 年化', `${fmtSigned(r.cagr - base.cagr, 1)} 個百分點`, r.mult > base.mult ? 'up' : 'down');
+      const rect = svg.getBoundingClientRect();
+      positionTooltip(box, tt, x(r.cagr) / (svg.viewBox.baseVal.width / rect.width));
+      tt.style.top = `${(M.top + i * rowH) / (svg.viewBox.baseVal.height / rect.height) - 10}px`;
+    };
+    const hide = () => { bar.setAttribute('fill-opacity', '1'); tt.style.display = 'none'; };
+    hit.addEventListener('pointerenter', show);
+    hit.addEventListener('pointerleave', hide);
+  }
+
+  const skippedTxt = (BEAT.skipped || []).length
+    ? `未納入排名：${BEAT.skipped.map((s) => `${s.name}（${s.reason}）`).join('、')}。`
+    : '';
+  note.textContent = `統計視窗 ${BEAT.window.start} ~ ${BEAT.window.end}，使用還原股價（含股息再投入）。${skippedTxt}` +
+    '注意存活者偏差：樣本以「今天仍然知名」的股票為主，十年前無法預先知道贏家是誰——這正是被動持有 0050 的核心論點。過去績效不代表未來，非投資建議。';
+}
+
 /* --- 量價散佈圖 --- */
 function renderScatter(rows) {
   const box = $('#scatterChart');
@@ -2179,6 +2295,7 @@ function renderAll() {
   renderScatter(rows);
   renderMonthChart(rows);
   renderCompareSection(); // 非同步：台股資料就緒後自行補繪
+  renderBeat();
   if (state.showTable) renderTable(rows);
 }
 
